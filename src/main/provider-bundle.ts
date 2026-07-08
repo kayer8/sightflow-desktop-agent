@@ -114,6 +114,7 @@ export class BundleProviderAdapter implements ProviderAdapter {
 
     switch (event.type) {
       case 'thinking':
+        return typeof event.content === 'string'
       case 'reply_text':
         return typeof event.content === 'string'
       case 'skip':

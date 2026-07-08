@@ -11,13 +11,32 @@ import { ChannelContext, ChannelSession, ProviderEvent, SessionEvent } from './s
 export interface GenericChannelState {
   measuredAt: number | null
   latestChatBaseline: number | null
+  latestMessageObservedAt: number | null
 }
 
 export function createInitialGenericChannelState(): GenericChannelState {
   return {
     measuredAt: null,
-    latestChatBaseline: null
+    latestChatBaseline: null,
+    latestMessageObservedAt: null
   }
+}
+
+const MIN_REPLY_DELAY_MS = 2000
+const MAX_REPLY_DELAY_MS = 12000
+const BASE_REPLY_DELAY_MS = 1200
+const REPLY_DELAY_PER_CHAR_MS = 60
+export const OBSERVE_SCREENSHOT_DELAY_MS = 1000
+
+export function calculateReplyDelayMs(text: string): number {
+  const charCount = Array.from(text.trim()).length
+  const delayMs = BASE_REPLY_DELAY_MS + charCount * REPLY_DELAY_PER_CHAR_MS
+  return Math.min(MAX_REPLY_DELAY_MS, Math.max(MIN_REPLY_DELAY_MS, delayMs))
+}
+
+export function calculateRemainingReplyDelayMs(text: string, observedAt: number, now: number): number {
+  const elapsedMs = Math.max(0, now - observedAt)
+  return Math.max(0, calculateReplyDelayMs(text) - elapsedMs)
 }
 
 export class GenericChannelSession implements ChannelSession<GenericChannelState> {
@@ -80,6 +99,8 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
       }
 
       case 'observe_chat': {
+        ctx.state.latestMessageObservedAt = Date.now()
+        await this.sleep(OBSERVE_SCREENSHOT_DELAY_MS)
         const screenshot = await this.device.screenshot()
         ctx.host.trace({
           phase: 'observe',
@@ -101,6 +122,16 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
 
       case 'provider.reply_text': {
         const sendStart = Date.now()
+        const observedAt = ctx.state.latestMessageObservedAt ?? sendStart
+        const replyDelayMs = calculateRemainingReplyDelayMs(event.content, observedAt, sendStart)
+        ctx.host.log('thinking', `等待 ${(replyDelayMs / 1000).toFixed(1)} 秒后发送回复`)
+        ctx.host.trace({
+          phase: 'act',
+          summary: '根据回复长度等待发送',
+          action: { kind: 'wait' },
+          outcome: { status: 'ok', latencyMs: replyDelayMs }
+        })
+        await this.sleep(replyDelayMs)
         await this.device.sendMessage(event.content)
         ctx.host.log('reply', event.content)
         ctx.host.trace({
@@ -249,6 +280,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
   private resetState(state: GenericChannelState): void {
     state.measuredAt = null
     state.latestChatBaseline = null
+    state.latestMessageObservedAt = null
   }
 
   private async tryOpenUnreadConversation(

@@ -257,6 +257,7 @@ export default function MemoryWindow(): React.JSX.Element {
             )}
           </div>
         ) : null}
+
       </aside>
 
       <main className="memory-main">
