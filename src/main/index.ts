@@ -4,7 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { checkAndRequestPermissions } from './permission'
 import Store from 'electron-store'
-import { AIClient } from '../core/ai-client'
+import { AIClient, AIClientConfig, DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../core/ai-client'
 import { DesktopDevice } from '../core/device'
 import { RPADevice } from '../core/rpa-device'
 import { BoxSelectDevice } from '../core/box-select-device'
@@ -43,8 +43,8 @@ import { ExperienceStore, NewExperienceCard } from '../core/memory/experience-st
 import { induceCardsFromSession } from '../core/memory/learn-from-session'
 const StoreClass = typeof Store === 'function' ? Store : ((Store as any).default as typeof Store)
 
-const FIXED_ARK_MODEL = 'doubao-seed-2-0-lite-260215'
-const FIXED_ARK_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
+const DEFAULT_BASE_MODEL = DEFAULT_AI_MODEL
+const DEFAULT_BASE_URL = DEFAULT_AI_BASE_URL
 
 interface PerAppCapture {
   strategy: CaptureStrategy
@@ -56,6 +56,8 @@ interface AppSettings {
   appType: AppType
   vision: {
     apiKey: string
+    baseURL: string
+    model: string
   }
   chatProvider: {
     manifestUrl: string
@@ -124,7 +126,7 @@ const settingsStore = new StoreClass({
   defaults: {
     locale: 'zh',
     appType: 'wechat',
-    vision: { apiKey: '' },
+    vision: { apiKey: '', baseURL: DEFAULT_BASE_URL, model: DEFAULT_BASE_MODEL },
     chatProvider: {
       manifestUrl: '',
       installed: null,
@@ -589,8 +591,9 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('memory:learnFromSession', async (_event, sessionId: string) => {
     try {
-      const apiKey = normalizeSettings(settingsStore.store).vision.apiKey
-      if (!apiKey) {
+      const settings = normalizeSettings(settingsStore.store)
+      const aiConfig = getAIConfig(settings)
+      if (!aiConfig.apiKey) {
         return { success: false, error: '请先在设置中填写视觉接口密钥' }
       }
       const data = await readTraceSession(worktraceBaseDir(), sessionId)
@@ -598,11 +601,7 @@ app.whenReady().then(async () => {
         return { success: false, error: '该轨迹暂无可学习的步骤' }
       }
 
-      const client = new AIClient({
-        apiKey,
-        model: FIXED_ARK_MODEL,
-        baseURL: FIXED_ARK_BASE_URL
-      })
+      const client = new AIClient(aiConfig)
       const induced = await induceCardsFromSession(client, data.session, data.steps)
       if (induced.length === 0) {
         return { success: true, cards: [] }
@@ -670,7 +669,11 @@ app.whenReady().then(async () => {
     const settings = normalizeSettings(config || settingsStore.store)
     if (runtimeDevice) {
       // setApiKey 在 BoxSelectDevice 上是 no-op，对 RPADevice 才生效。
-      runtimeDevice.setApiKey(settings.vision.apiKey)
+      if (runtimeDevice.setAIConfig) {
+        runtimeDevice.setAIConfig(getAIConfig(settings))
+      } else {
+        runtimeDevice.setApiKey(settings.vision.apiKey)
+      }
       runtimeDevice.setAppType(settings.appType)
     }
     if (runtime) {
@@ -680,11 +683,12 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('engine:testConnection', async (_event, config) => {
-    const apiKey = config?.apiKey || normalizeSettings(settingsStore.store).vision.apiKey
+    const settings = normalizeSettings(settingsStore.store)
     const client = new AIClient({
-      apiKey,
-      model: FIXED_ARK_MODEL,
-      baseURL: FIXED_ARK_BASE_URL
+      ...getAIConfig(settings),
+      apiKey: config?.apiKey || settings.vision.apiKey,
+      baseURL: config?.baseURL || settings.vision.baseURL,
+      model: config?.model || settings.vision.model
     })
     return client.testConnection()
   })
@@ -762,10 +766,11 @@ app.whenReady().then(async () => {
 
   // ── 测试入口：VLM 并行 vs 串行 ──
   ipcMain.handle('test:vlm-parallel', async () => {
-    const apiKey = normalizeSettings(settingsStore.store).vision.apiKey
-    if (!apiKey) return { error: '请先在设置中填写视觉接口密钥' }
+    const settings = normalizeSettings(settingsStore.store)
+    const aiConfig = getAIConfig(settings)
+    if (!aiConfig.apiKey) return { error: '请先在设置中填写视觉接口密钥' }
     const { runVlmParallelTest } = await import('../core/rpa/tests/test-vlm-parallel')
-    return await runVlmParallelTest(apiKey, 'wechat')
+    return await runVlmParallelTest(aiConfig, 'wechat')
   })
 
   // ── Skill HTTP Server（OpenClaw 远程启动 / 暂停接入点） ──
@@ -818,7 +823,7 @@ async function startEngineCore(rawConfig?: any): Promise<SkillStartResult> {
     if (!settings.chatProvider.installed) {
       const loaded = await loadBuiltinDoubaoProvider({
         ...settings.chatProvider.config,
-        apiKey: settings.vision.apiKey
+        ...getAIConfig(settings)
       })
       provider = loaded.provider
     } else {
@@ -841,7 +846,7 @@ async function startEngineCore(rawConfig?: any): Promise<SkillStartResult> {
       }
 
       const effectiveConfig = isDoubao
-        ? { ...settings.chatProvider.config, apiKey: settings.vision.apiKey }
+        ? { ...settings.chatProvider.config, ...getAIConfig(settings) }
         : settings.chatProvider.config
 
       const loaded = await loadInstalledProvider(settings.chatProvider.installed, effectiveConfig)
@@ -858,7 +863,7 @@ async function startEngineCore(rawConfig?: any): Promise<SkillStartResult> {
     let device: DesktopDevice
     let strategy: CaptureStrategy
     try {
-      const built = await buildDevice(appType, settings, settings.vision.apiKey, log)
+      const built = await buildDevice(appType, settings, log)
       device = built.device
       strategy = built.strategy
     } catch (err: any) {
@@ -877,7 +882,7 @@ async function startEngineCore(rawConfig?: any): Promise<SkillStartResult> {
       appType,
       engineVersion: app.getVersion(),
       providerId: settings.chatProvider.installed?.id ?? BUILTIN_DOUBAO_PROVIDER_ID,
-      model: settings.chatProvider.config?.model || FIXED_ARK_MODEL
+      model: settings.chatProvider.config?.model || settings.vision.model
     })
 
     const onTrace = (input: TraceStepInput): void => {
@@ -991,7 +996,6 @@ function resolveSettingsStrategy(appType: AppType, settings: AppSettings): Captu
 async function buildDevice(
   appType: AppType,
   settings: AppSettings,
-  apiKey: string,
   log: (type: 'thinking' | 'reply' | 'skip' | 'error', content: string) => void
 ): Promise<{ device: DesktopDevice; strategy: CaptureStrategy }> {
   const perApp = settings.capture[appType] ?? { strategy: 'auto' as CaptureStrategy, regions: null }
@@ -1000,7 +1004,7 @@ async function buildDevice(
   if (effective === 'vlm') {
     const rpa = new RPADevice()
     rpa.setAppType(appType)
-    rpa.setApiKey(apiKey)
+    rpa.setAIConfig(getAIConfig(settings))
     return { device: rpa, strategy: 'vlm' }
   }
 
@@ -1114,7 +1118,8 @@ function normalizeCapture(raw: unknown): Partial<Record<AppType, PerAppCapture>>
 
 function normalizeSettings(raw: any): AppSettings {
   const oldApiKey = typeof raw?.apiKey === 'string' ? raw.apiKey : ''
-  const oldModel = typeof raw?.model === 'string' && raw.model ? raw.model : FIXED_ARK_MODEL
+  const oldModel = typeof raw?.model === 'string' && raw.model ? raw.model : DEFAULT_BASE_MODEL
+  const oldBaseURL = typeof raw?.baseURL === 'string' && raw.baseURL ? raw.baseURL : ''
   const oldSystemPrompt = typeof raw?.systemPrompt === 'string' ? raw.systemPrompt : ''
   const rawProviderConfig =
     raw?.chatProvider?.config && typeof raw.chatProvider.config === 'object'
@@ -1136,7 +1141,9 @@ function normalizeSettings(raw: any): AppSettings {
     locale: raw?.locale === 'en' ? 'en' : 'zh',
     appType: coerceAppType(raw?.appType),
     vision: {
-      apiKey: raw?.vision?.apiKey || oldApiKey || ''
+      apiKey: raw?.vision?.apiKey || oldApiKey || '',
+      baseURL: raw?.vision?.baseURL || oldBaseURL || DEFAULT_BASE_URL,
+      model: raw?.vision?.model || DEFAULT_BASE_MODEL
     },
     chatProvider: {
       manifestUrl: raw?.chatProvider?.manifestUrl || raw?.providerManifestUrl || '',
@@ -1145,6 +1152,14 @@ function normalizeSettings(raw: any): AppSettings {
     },
     defaultCaptureStrategy: coerceStrategy(raw?.defaultCaptureStrategy, 'auto'),
     capture: normalizeCapture(raw?.capture)
+  }
+}
+
+function getAIConfig(settings: AppSettings): Partial<AIClientConfig> & { apiKey: string } {
+  return {
+    apiKey: settings.vision.apiKey,
+    baseURL: settings.vision.baseURL || DEFAULT_BASE_URL,
+    model: settings.vision.model || DEFAULT_BASE_MODEL
   }
 }
 

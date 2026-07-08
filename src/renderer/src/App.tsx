@@ -126,6 +126,8 @@ interface AppSettings {
   appType: AppType
   vision: {
     apiKey: string
+    baseURL: string
+    model: string
   }
   chatProvider: {
     manifestUrl: string
@@ -158,14 +160,14 @@ const BUILTIN_PROVIDER_CATALOG: ProviderCatalogItem[] = [
           label: '模型',
           type: 'text',
           required: true,
-          readonly: true,
-          defaultValue: 'doubao-seed-2-0-lite-260428'
+          defaultValue: 'gpt-5.5'
         },
         {
           key: 'baseURL',
           label: 'Base URL',
           type: 'url',
-          placeholder: 'https://ark.cn-beijing.volces.com/api/v3'
+          defaultValue: 'https://api.openai.com/v1',
+          placeholder: 'https://api.openai.com/v1'
         },
         {
           key: 'systemPrompt',
@@ -661,6 +663,8 @@ function SettingsWindow(): React.JSX.Element {
 
 function SettingsPanel() {
   const [visionApiKey, setVisionApiKey] = useState('')
+  const [visionBaseURL, setVisionBaseURL] = useState('https://api.openai.com/v1')
+  const [visionModel, setVisionModel] = useState('gpt-5.5')
   const [testing, setTesting] = useState(false)
 
   useEffect(() => {
@@ -668,6 +672,8 @@ function SettingsPanel() {
       const settings = (await window.electron?.invoke('settings:getAll')) as AppSettings | undefined
       if (settings) {
         setVisionApiKey(settings.vision?.apiKey || '')
+        setVisionBaseURL(settings.vision?.baseURL || 'https://api.openai.com/v1')
+        setVisionModel(settings.vision?.model || 'gpt-5.5')
       }
     }
 
@@ -676,23 +682,25 @@ function SettingsPanel() {
 
   const handleSaveVision = useCallback(async () => {
     const payload: Partial<AppSettings> = {
-      vision: { apiKey: visionApiKey }
+      vision: { apiKey: visionApiKey, baseURL: visionBaseURL, model: visionModel }
     }
     await window.electron?.invoke('settings:set', payload)
     await window.electron?.invoke('engine:updateConfig', {
       ...((await window.electron?.invoke('settings:getAll')) as AppSettings),
       ...payload,
-      vision: { apiKey: visionApiKey }
+      vision: { apiKey: visionApiKey, baseURL: visionBaseURL, model: visionModel }
     })
     showToast(t('settings.saved'), 'success')
-  }, [visionApiKey])
+  }, [visionApiKey, visionBaseURL, visionModel])
 
   const handleTestConnection = useCallback(async () => {
     if (!visionApiKey) return
     setTesting(true)
     try {
       const result = await window.electron?.invoke('engine:testConnection', {
-        apiKey: visionApiKey
+        apiKey: visionApiKey,
+        baseURL: visionBaseURL,
+        model: visionModel
       })
       if (result?.success) {
         showToast(t('settings.testConnection.success'), 'success')
@@ -704,7 +712,7 @@ function SettingsPanel() {
     } finally {
       setTesting(false)
     }
-  }, [visionApiKey])
+  }, [visionApiKey, visionBaseURL, visionModel])
 
   return (
     <div className="settings-page slide-up">
@@ -733,12 +741,25 @@ function SettingsPanel() {
 
         <div className="form-group">
           <label className="form-label">{t('settings.visionModel')}</label>
-          <input className="form-input" value="doubao-seed-2-0-lite-260215" disabled />
+          <input
+            className="form-input"
+            value={visionModel}
+            onChange={(e) => setVisionModel(e.target.value)}
+            placeholder="gpt-5.5"
+            autoComplete="off"
+          />
         </div>
 
         <div className="form-group">
           <label className="form-label">{t('settings.visionBaseUrl')}</label>
-          <input className="form-input" value="https://ark.cn-beijing.volces.com/api/v3" disabled />
+          <input
+            className="form-input"
+            type="url"
+            value={visionBaseURL}
+            onChange={(e) => setVisionBaseURL(e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            autoComplete="off"
+          />
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
@@ -789,7 +810,9 @@ function AgentPanel(): React.JSX.Element {
           ...getProviderDefaults(BUILTIN_PROVIDER_CATALOG[0]),
           ...(prev.doubao || {}),
           ...(!settings?.chatProvider?.installed ? settings?.chatProvider?.config || {} : {}),
-          apiKey: prev.doubao?.apiKey || settings?.vision?.apiKey || ''
+          apiKey: prev.doubao?.apiKey || settings?.vision?.apiKey || '',
+          baseURL: prev.doubao?.baseURL || settings?.vision?.baseURL || 'https://api.openai.com/v1',
+          model: prev.doubao?.model || settings?.vision?.model || 'gpt-5.5'
         },
         [nextActiveId]: {
           ...getProviderDefaults(nextCatalog.find((provider) => provider.id === nextActiveId)),
@@ -841,13 +864,17 @@ function AgentPanel(): React.JSX.Element {
       }
 
       if (provider.id === 'doubao') {
-        const { apiKey, ...providerConfig } = values
+        const { apiKey, baseURL, model, ...providerConfig } = values
         await window.electron?.invoke('settings:set', {
-          vision: { apiKey },
+          vision: {
+            apiKey,
+            baseURL: baseURL || 'https://api.openai.com/v1',
+            model: model || 'gpt-5.5'
+          },
           chatProvider: {
             manifestUrl: '',
             installed: null,
-            config: providerConfig
+            config: { ...providerConfig, baseURL, model }
           }
         })
         const settings = (await window.electron?.invoke('settings:getAll')) as AppSettings
@@ -1072,6 +1099,8 @@ function getProviderValues(
       ...defaults,
       ...(settings?.chatProvider.installed ? {} : settings?.chatProvider.config || {}),
       apiKey: drafts.doubao?.apiKey || settings?.vision.apiKey || '',
+      baseURL: drafts.doubao?.baseURL || settings?.vision.baseURL || defaults.baseURL,
+      model: drafts.doubao?.model || settings?.vision.model || defaults.model,
       ...(drafts.doubao || {})
     }
   }

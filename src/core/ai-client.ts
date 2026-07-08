@@ -15,6 +15,46 @@ export interface AIClientConfig {
   systemPrompt: string
 }
 
+export const DEFAULT_AI_MODEL = 'gpt-5.5'
+export const DEFAULT_AI_BASE_URL = 'https://api.openai.com/v1'
+export const ARK_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
+export const AI_API_TIMEOUT_MS = 60_000 // 60 秒超时
+
+type ChatMessage = {
+  role: string
+  content: any
+}
+
+export function buildChatCompletionsRequest(config: {
+  baseURL: string
+  model: string
+  messages: ChatMessage[]
+}): { url: string; body: Record<string, any> } {
+  const baseURL = normalizeBaseURL(config.baseURL || DEFAULT_AI_BASE_URL)
+  const body: Record<string, any> = {
+    model: config.model || DEFAULT_AI_MODEL,
+    messages: config.messages,
+    stream: false
+  }
+
+  if (isArkBaseURL(baseURL)) {
+    body.thinking = { type: 'disabled' }
+  }
+
+  return {
+    url: `${baseURL}/chat/completions`,
+    body
+  }
+}
+
+function normalizeBaseURL(baseURL: string): string {
+  return baseURL.replace(/\/+$/, '')
+}
+
+function isArkBaseURL(baseURL: string): boolean {
+  return baseURL.includes('ark.cn-beijing.volces.com')
+}
+
 /** 把经验卡片拼成 system prompt 附加段（与内置 provider bundle 的格式保持一致） */
 export function buildMemorySection(memoryCards?: MemoryCardBrief[]): string {
   if (!memoryCards || memoryCards.length === 0) return ''
@@ -25,8 +65,8 @@ export function buildMemorySection(memoryCards?: MemoryCardBrief[]): string {
   return `\n\n## 团队经验（来自工作记忆，优先遵循）\n${lines.join('\n')}`
 }
 
-const DEFAULT_MODEL = 'doubao-seed-2-0-lite-260215'
-const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
+const DEFAULT_MODEL = DEFAULT_AI_MODEL
+const DEFAULT_BASE_URL = DEFAULT_AI_BASE_URL
 
 const REPLY_SYSTEM_PROMPT = `你是一个微信自动回复助手。你会收到一张微信/企业微信的聊天窗口截图。
 
@@ -158,17 +198,16 @@ export class AIClient {
    * 在非火山供应商上会被忽略，放在这里不影响兼容性
    */
   private async callAPI(messages: any[]): Promise<any> {
-    const url = `${this.config.baseURL}/chat/completions`
-    const TIMEOUT_MS = 30_000 // 30 秒超时
+    const request = buildChatCompletionsRequest({
+      baseURL: this.config.baseURL,
+      model: this.config.model,
+      messages
+    })
+    const TIMEOUT_MS = AI_API_TIMEOUT_MS
     const callStart = Date.now()
 
     // 计算 payload 大小（粗略，不重复序列化）
-    const bodyStr = JSON.stringify({
-      model: this.config.model,
-      messages,
-      thinking: { type: 'disabled' },
-      stream: false
-    })
+    const bodyStr = JSON.stringify(request.body)
     const bodySizeKB = (bodyStr.length / 1024).toFixed(0)
     console.log(
       `[AIClient] callAPI 开始 | model=${this.config.model} | payload=${bodySizeKB}KB | timeout=${TIMEOUT_MS / 1000}s`
@@ -178,7 +217,7 @@ export class AIClient {
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
     try {
-      const response = await fetch(url, {
+      const response = await fetch(request.url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,

@@ -1,5 +1,5 @@
-const DEFAULT_MODEL = 'doubao-seed-2-0-lite-260215'
-const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
+const DEFAULT_MODEL = 'gpt-5.5'
+const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 const DEFAULT_PROMPT = `你是一个微信自动回复助手。你会收到一张微信/企业微信的聊天窗口截图。
 
 ## 你的任务
@@ -46,6 +46,7 @@ export function createProvider(context) {
           screenshot: input.screenshot,
           apiKey,
           model: providerConfig.model || DEFAULT_MODEL,
+          baseURL: providerConfig.baseURL || DEFAULT_BASE_URL,
           systemPrompt: (providerConfig.systemPrompt || DEFAULT_PROMPT) + memorySection
         })
 
@@ -66,7 +67,7 @@ export function createProvider(context) {
   }
 }
 
-async function requestReply({ screenshot, apiKey, model, systemPrompt }) {
+async function requestReply({ screenshot, apiKey, model, baseURL, systemPrompt }) {
   const body = {
     model,
     messages: [
@@ -79,11 +80,15 @@ async function requestReply({ screenshot, apiKey, model, systemPrompt }) {
         ]
       }
     ],
-    thinking: { type: 'disabled' },
     stream: false
   }
 
-  const response = await fetch(`${DEFAULT_BASE_URL}/chat/completions`, {
+  const normalizedBaseURL = String(baseURL || DEFAULT_BASE_URL).replace(/\/+$/, '')
+  if (normalizedBaseURL.includes('ark.cn-beijing.volces.com')) {
+    body.thinking = { type: 'disabled' }
+  }
+
+  const response = await fetch(`${normalizedBaseURL}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
