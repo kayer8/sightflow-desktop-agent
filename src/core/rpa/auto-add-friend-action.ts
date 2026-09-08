@@ -15,7 +15,6 @@ const STEP_PROMPTS: Record<AutoAddStep, string> = {
   通讯录: '当前是企业微信消息页。找到左侧竖向导航栏靠近底部的“通讯录”入口。不要选择中间列表或右侧内容。只输出一个 <bbox>x1,y1,x2,y2</bbox>。',
   新的联系人: '当前已进入企业微信通讯录页。找到左侧第二栏第一项、文字为“新的联系人”的列表项。不要选择右上角“添加”。只输出一个 <bbox>x1,y1,x2,y2</bbox>。',
   顶部添加: '当前页面标题是“新的联系人”。找到窗口右上角、与页面标题同一行的“添加”按钮。不要选择左侧列表或弹窗按钮。只输出一个 <bbox>x1,y1,x2,y2</bbox>。',
-  手机号输入框: '当前已打开“添加新联系人”弹窗。找到弹窗内部顶部、带放大镜图标且占据弹窗宽度的“手机号/邮箱”输入框。不要选择窗口右上角按钮。只输出一个 <bbox>x1,y1,x2,y2</bbox>。',
   搜索结果添加: '当前“添加新联系人”弹窗已显示手机号搜索结果。只找弹窗内第一条搜索结果这一行最右侧的蓝色“添加”按钮，按钮必须与结果头像和昵称在同一行。严禁选择页面右上角的“添加”。只输出一个 <bbox>x1,y1,x2,y2</bbox>。',
   发送: '当前已打开好友申请页面。找到申请弹窗底部右侧的“发送”按钮。不要选择关闭按钮或页面右上角“添加”。只输出一个 <bbox>x1,y1,x2,y2</bbox>。'
 }
@@ -76,8 +75,8 @@ export async function addWeWorkFriend(aiClient: AIClient, phone: string): Promis
   await clickStep(aiClient, appType, '新的联系人')
   await clickStep(aiClient, appType, '顶部添加')
 
-  const [inputX, inputY] = await locateStep(aiClient, appType, '手机号输入框')
-  await clickUnreadContactAction([inputX, inputY])
+  // 企业微信打开“添加新联系人”弹窗时，手机号输入框会自动获得焦点。
+  // Avoiding an extra VLM lookup here removes a common modal-input false positive.
   clipboard.writeText(phone)
   await randomDelayIn(100, 200)
   const robot = getRobot()

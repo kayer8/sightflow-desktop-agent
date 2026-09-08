@@ -4,7 +4,6 @@ export type AutoAddStep =
   | '通讯录'
   | '新的联系人'
   | '顶部添加'
-  | '手机号输入框'
   | '搜索结果添加'
   | '发送'
 
@@ -16,7 +15,6 @@ const STEP_REGIONS: Record<AutoAddStep, NormalizedRegion> = {
   通讯录: [0, 350, 90, 950],
   新的联系人: [35, 35, 210, 180],
   顶部添加: [850, 0, 1000, 120],
-  手机号输入框: [500, 350, 900, 850],
   搜索结果添加: [650, 430, 900, 800],
   发送: [400, 350, 1000, 1000]
 }
@@ -52,4 +50,8 @@ export function selectAutoAddBBox(step: AutoAddStep, bboxes: BBox[]): BBox | nul
 
 export function getAutoAddStepRegion(step: AutoAddStep): NormalizedRegion {
   return STEP_REGIONS[step]
+}
+
+export function getAutoAddStepSequence(): AutoAddStep[] {
+  return ['通讯录', '新的联系人', '顶部添加', '搜索结果添加', '发送']
 }

@@ -1,5 +1,13 @@
 import * as assert from 'node:assert/strict'
-import { isBBoxValidForAutoAddStep, selectAutoAddBBox } from './auto-add-friend-logic'
+import { getAutoAddStepSequence, isBBoxValidForAutoAddStep, selectAutoAddBBox } from './auto-add-friend-logic'
+
+assert.deepEqual(getAutoAddStepSequence(), [
+  '通讯录',
+  '新的联系人',
+  '顶部添加',
+  '搜索结果添加',
+  '发送'
+])
 
 assert.equal(
   isBBoxValidForAutoAddStep('顶部添加', [940, 20, 980, 55]),
@@ -23,11 +31,6 @@ assert.deepEqual(
     [780, 550, 810, 585]
   ]),
   [780, 550, 810, 585]
-)
-
-assert.equal(
-  isBBoxValidForAutoAddStep('手机号输入框', [1001, 400, 1100, 500]),
-  false
 )
 
 console.log('auto-add-friend-logic tests passed')
