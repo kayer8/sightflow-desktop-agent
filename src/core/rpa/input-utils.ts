@@ -6,8 +6,8 @@ const IS_WINDOWS = process.platform === 'win32'
 const IS_MAC = process.platform === 'darwin'
 
 import { delay, randomDelayIn, randomizeUiWaitMs, getRobot } from './util'
+import { createHumanLikePath, getMouseMovementDelayMs } from './mouse-movement'
 
-// 原版 whatsapp-agent-demo 的贝塞尔曲线仿人滑动
 async function humanLikeMove(
   targetX: number,
   targetY: number,
@@ -20,57 +20,25 @@ async function humanLikeMove(
   const robot = getRobot()
   if (!robot) return
 
-  const { minSteps = 5, maxSteps = 15, baseDelay = 2 } = options
-
   const startPos = robot.getMousePos()
-  const dx = targetX - startPos.x
-  const dy = targetY - startPos.y
-  const distance = Math.sqrt(dx * dx + dy * dy)
+  const { minSteps, maxSteps, baseDelay } = options
+  const path = createHumanLikePath(
+    { x: startPos.x, y: startPos.y },
+    { x: targetX, y: targetY },
+    { minSteps, maxSteps }
+  )
 
-  if (distance < 1) {
+  if (path.length === 0) {
     robot.moveMouse(Math.round(targetX), Math.round(targetY))
     return
   }
 
-  // 根据距离决定步数
-  const steps = Math.min(
-    maxSteps,
-    Math.max(minSteps, Math.floor(distance / 40) + Math.floor(Math.random() * 3))
-  )
-
-  // 生成贝塞尔曲线控制点 (Cubic Bezier)
-  const ctrl1X = startPos.x + dx * Math.random() * 0.5 + (Math.random() - 0.5) * distance * 0.2
-  const ctrl1Y = startPos.y + dy * Math.random() * 0.5 + (Math.random() - 0.5) * distance * 0.2
-  const ctrl2X = startPos.x + dx * (0.5 + Math.random() * 0.5) + (Math.random() - 0.5) * distance * 0.2
-  const ctrl2Y = startPos.y + dy * (0.5 + Math.random() * 0.5) + (Math.random() - 0.5) * distance * 0.2
-
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps
-    
-    // 匀速转非线性 (Ease Out)
-    const easeT = t * (2 - t)
-    
-    const mt = 1 - easeT
-    const mt2 = mt * mt
-    const mt3 = mt2 * mt
-    const easeT2 = easeT * easeT
-    const easeT3 = easeT2 * easeT
-
-    // 贝塞尔曲线公式计算
-    const x = mt3 * startPos.x + 3 * mt2 * easeT * ctrl1X + 3 * mt * easeT2 * ctrl2X + easeT3 * targetX
-    const y = mt3 * startPos.y + 3 * mt2 * easeT * ctrl1Y + 3 * mt * easeT2 * ctrl2Y + easeT3 * targetY
-
-    // 加入随机细微抖动 (±1像素)
-    const jitterX = i === steps ? 0 : (Math.random() - 0.5) * 2
-    const jitterY = i === steps ? 0 : (Math.random() - 0.5) * 2
-
-    robot.moveMouse(Math.round(x + jitterX), Math.round(y + jitterY))
-
-    // 变频延迟，模拟人类微停顿
-    let stepDelay = baseDelay + Math.random() * 2
-    if (i > steps * 0.8) stepDelay += 2
-    
-    await delay(randomizeUiWaitMs(stepDelay))
+  const movementBaseDelay = Number.isFinite(baseDelay) ? Math.max(5, baseDelay as number) : 10
+  for (let index = 0; index < path.length; index++) {
+    const point = path[index]
+    robot.moveMouse(point.x, point.y)
+    const progress = (index + 1) / path.length
+    await delay(getMouseMovementDelayMs(progress, movementBaseDelay))
   }
 }
 

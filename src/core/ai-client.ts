@@ -18,7 +18,7 @@ export interface AIClientConfig {
 export const DEFAULT_AI_MODEL = 'gpt-5.5'
 export const DEFAULT_AI_BASE_URL = 'https://api.openai.com/v1'
 export const ARK_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
-export const AI_API_TIMEOUT_MS = 60_000 // 60 秒超时
+export const AI_API_TIMEOUT_MS = 180_000 // 180 秒超时
 
 type ChatMessage = {
   role: string

@@ -23,6 +23,6 @@ const arkRequest = buildChatCompletionsRequest({
 assert.equal(arkRequest.url, 'https://ark.cn-beijing.volces.com/api/v3/chat/completions')
 assert.deepEqual(arkRequest.body.thinking, { type: 'disabled' })
 
-assert.equal(AI_API_TIMEOUT_MS, 60_000)
+assert.equal(AI_API_TIMEOUT_MS, 180_000)
 
 console.log('ai-client-config tests passed')
