@@ -7,6 +7,7 @@
 
 import { DesktopDevice } from './device'
 import { ChannelContext, ChannelSession, ProviderEvent, SessionEvent } from './session-types'
+import { randomizeUiWaitMs } from './rpa/util'
 
 export interface GenericChannelState {
   measuredAt: number | null
@@ -100,7 +101,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
 
       case 'observe_chat': {
         ctx.state.latestMessageObservedAt = Date.now()
-        await this.sleep(OBSERVE_SCREENSHOT_DELAY_MS)
+        await this.sleepUi(OBSERVE_SCREENSHOT_DELAY_MS)
         const screenshot = await this.device.screenshot()
         ctx.host.trace({
           phase: 'observe',
@@ -131,7 +132,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
           action: { kind: 'wait' },
           outcome: { status: 'ok', latencyMs: replyDelayMs }
         })
-        await this.sleep(replyDelayMs)
+        await this.sleepUi(replyDelayMs)
         await this.device.sendMessage(event.content)
         ctx.host.log('reply', event.content)
         ctx.host.trace({
@@ -214,7 +215,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
           outcome: { status: 'ok' }
         })
         await this.device.activeUnreadByClick(chatEntranceCoords)
-        await this.sleep(150 + Math.random() * 100)
+        await this.sleepUi(150 + Math.random() * 100)
 
         const openResult = await this.tryOpenUnreadConversation(ctx)
         if (openResult === 'opened') {
@@ -290,7 +291,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
 
     if (!contactResult.isUnread) {
       ctx.host.log('thinking', '当前会话没有新消息，正在重新检测...')
-      await this.sleep(1000)
+      await this.sleepUi(1000)
 
       const recheckResult = await this.device.hasUnreadMessage()
       const recheckCoords = recheckResult.chatEntranceArea?.coordinates
@@ -302,7 +303,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
 
       ctx.host.log('thinking', '仍检测到未读消息，正在再次尝试打开会话')
       await this.device.activeUnreadByClick(recheckCoords)
-      await this.sleep(500)
+      await this.sleepUi(500)
       contactResult = await this.device.isChatContactUnread()
     }
 
@@ -316,7 +317,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
         )
         this.device.clearUnreadCache()
         this.consecutiveUnreadFailures = 0
-        await this.sleep(500)
+        await this.sleepUi(500)
 
         contactResult = await this.device.isChatContactUnread()
         if (!contactResult.isUnread) {
@@ -330,7 +331,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
           }
 
           await this.device.activeUnreadByClick(retryCoords)
-          await this.sleep(500)
+          await this.sleepUi(500)
           contactResult = await this.device.isChatContactUnread()
 
           if (!contactResult.isUnread) {
@@ -362,7 +363,7 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
       outcome: { status: 'ok' }
     })
     await this.device.clickUnreadContact(contactResult.firstContactCoords)
-    await this.sleep(500 + Math.random() * 300)
+    await this.sleepUi(500 + Math.random() * 300)
     this.device.clearChatBaseline()
     ctx.state.latestChatBaseline = null
     return 'opened'
@@ -370,5 +371,9 @@ export class GenericChannelSession implements ChannelSession<GenericChannelState
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  private sleepUi(ms: number): Promise<void> {
+    return this.sleep(randomizeUiWaitMs(ms))
   }
 }

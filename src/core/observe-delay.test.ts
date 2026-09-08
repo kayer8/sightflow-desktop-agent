@@ -1,7 +1,6 @@
 import * as assert from 'node:assert/strict'
 import {
   GenericChannelSession,
-  OBSERVE_SCREENSHOT_DELAY_MS,
   createInitialGenericChannelState
 } from './generic-channel-session'
 import { DesktopDevice } from './device'
@@ -48,6 +47,10 @@ const ctx: ChannelContext<ReturnType<typeof createInitialGenericChannelState>> =
 
 async function main(): Promise<void> {
   const originalSetTimeout = globalThis.setTimeout
+  const originalRandom = Math.random
+  let randomIndex = 0
+  const randomValues = [0.99, 0.99, 0.99]
+  Math.random = () => randomValues[randomIndex++] ?? 0
 
   globalThis.setTimeout = ((handler: (...args: unknown[]) => void, timeout?: number) => {
     timeouts.push(Number(timeout))
@@ -60,9 +63,10 @@ async function main(): Promise<void> {
     await session.onEvent({ type: 'observe_chat' }, ctx)
   } finally {
     globalThis.setTimeout = originalSetTimeout
+    Math.random = originalRandom
   }
 
-  assert.equal(timeouts[0], OBSERVE_SCREENSHOT_DELAY_MS)
+  assert.equal(timeouts[0], 5980)
   assert.deepEqual(calls, ['screenshot'])
 
   console.log('observe-delay tests passed')

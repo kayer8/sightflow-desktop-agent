@@ -18,6 +18,7 @@ export interface DesktopDevice {
   setAppType(appType: AppType): void
   setApiKey(apiKey: string): void
   setAIConfig?(config: Partial<AIClientConfig> & { apiKey: string }): void
+  addFriend?(phone: string): Promise<void>
 
   // ── 生命周期 ──
   // session 启停时由 GenericChannelSession 调用，给设备机会做缓存初始化 / 清理。

@@ -41,6 +41,12 @@ import {
 import { TraceStepInput } from '../core/trace/trace-types'
 import { ExperienceStore, NewExperienceCard } from '../core/memory/experience-store'
 import { induceCardsFromSession } from '../core/memory/learn-from-session'
+import {
+  getTestAutoAddPhone,
+  normalizeAutoAddFriendsSettings,
+  parseAutoAddPhones,
+  AutoAddFriendsSettings
+} from '../core/auto-add-friends'
 const StoreClass = typeof Store === 'function' ? Store : ((Store as any).default as typeof Store)
 
 const DEFAULT_BASE_MODEL = DEFAULT_AI_MODEL
@@ -68,6 +74,7 @@ interface AppSettings {
   defaultCaptureStrategy: CaptureStrategy
   // 每个 appType 独立保存的策略 + 框选区域
   capture: Partial<Record<AppType, PerAppCapture>>
+  autoAddFriends: AutoAddFriendsSettings
 }
 
 type ProviderConfigFieldType = 'text' | 'password' | 'url' | 'select' | 'textarea'
@@ -133,7 +140,8 @@ const settingsStore = new StoreClass({
       config: {}
     },
     defaultCaptureStrategy: 'auto',
-    capture: {}
+    capture: {},
+    autoAddFriends: { enabled: false, phonesJson: '{"phones":[]}', intervalSeconds: 20 }
   }
 })
 
@@ -141,6 +149,8 @@ let runtime: RuntimeHost<ReturnType<typeof createInitialGenericChannelState>> | 
 let runtimeDevice: DesktopDevice | null = null
 let settingsWindow: BrowserWindow | null = null
 let memoryWindow: BrowserWindow | null = null
+let autoAddFriendsTimer: NodeJS.Timeout | null = null
+let autoAddFriendsRunning = false
 
 // ── 工作记忆（work-trace + 经验卡片）单例，首次使用时初始化 ──
 let traceRecorderInstance: TraceRecorder | null = null
@@ -478,10 +488,18 @@ app.whenReady().then(async () => {
       capture: {
         ...current.capture,
         ...(data.capture || {})
-      }
+      },
+      autoAddFriends: normalizeAutoAddFriendsSettings({
+        ...current.autoAddFriends,
+        ...(data.autoAddFriends || {})
+      })
     } satisfies AppSettings
 
     settingsStore.set(next as any)
+    const normalizedNext = normalizeSettings(next)
+    if (runtime?.isRunning() && runtimeDevice) {
+      configureAutoAddFriends(normalizedNext, runtimeDevice, normalizedNext.appType, sendEngineLog)
+    }
     return { success: true }
   })
 
@@ -665,6 +683,35 @@ app.whenReady().then(async () => {
     return { running: runtime?.isRunning() ?? false }
   })
 
+  ipcMain.handle('autoAddFriends:test', async () => {
+    if (runtime?.isRunning()) {
+      return { success: false, error: '请先停止引擎，再测试添加联系人' }
+    }
+
+    const settings = normalizeSettings(settingsStore.store)
+    if (settings.appType !== 'wework') {
+      return { success: false, error: '测试添加联系人仅支持企业微信，请先切换应用类型' }
+    }
+    if (!settings.vision.apiKey) {
+      return { success: false, error: '请先填写视觉接口密钥' }
+    }
+
+    const phone = getTestAutoAddPhone(settings.autoAddFriends.phonesJson)
+    if (!phone) {
+      return { success: false, error: '手机号 JSON 中没有有效手机号' }
+    }
+
+    try {
+      const device = new RPADevice()
+      device.setAppType('wework')
+      device.setAIConfig(getAIConfig(settings))
+      await device.addFriend?.(phone)
+      return { success: true, phone }
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) }
+    }
+  })
+
   ipcMain.handle('engine:updateConfig', async (_event, config) => {
     const settings = normalizeSettings(config || settingsStore.store)
     if (runtimeDevice) {
@@ -795,6 +842,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  clearAutoAddFriendsTimer()
   stopSkillServer()
 })
 
@@ -919,6 +967,8 @@ async function startEngineCore(rawConfig?: any): Promise<SkillStartResult> {
       console.error('[Main] Runtime session error:', err)
     })
 
+    configureAutoAddFriends(settings, device, appType, log)
+
     notifyEngineStateChanged('running')
 
     return { ok: true }
@@ -932,6 +982,7 @@ async function startEngineCore(rawConfig?: any): Promise<SkillStartResult> {
 }
 
 async function stopEngineCore(stopReason: string): Promise<SkillPauseResult> {
+  clearAutoAddFriendsTimer()
   if (!runtime?.isRunning()) {
     return { ok: false, reason: 'not_running', message: '引擎未运行' }
   }
@@ -1151,8 +1202,62 @@ function normalizeSettings(raw: any): AppSettings {
       config: rawProviderConfig
     },
     defaultCaptureStrategy: coerceStrategy(raw?.defaultCaptureStrategy, 'auto'),
-    capture: normalizeCapture(raw?.capture)
+    capture: normalizeCapture(raw?.capture),
+    autoAddFriends: normalizeAutoAddFriendsSettings(raw?.autoAddFriends)
   }
+}
+
+function clearAutoAddFriendsTimer(): void {
+  if (autoAddFriendsTimer) clearInterval(autoAddFriendsTimer)
+  autoAddFriendsTimer = null
+}
+
+function sendEngineLog(
+  type: 'thinking' | 'reply' | 'skip' | 'error',
+  content: string
+): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('engine:log', { type, content })
+  }
+}
+
+function configureAutoAddFriends(
+  settings: AppSettings,
+  device: DesktopDevice,
+  appType: AppType,
+  log: (type: 'thinking' | 'reply' | 'skip' | 'error', content: string) => void
+): void {
+  clearAutoAddFriendsTimer()
+  const config = settings.autoAddFriends
+  if (appType !== 'wework' || !config.enabled || !device.addFriend) return
+  const addFriend = device.addFriend.bind(device)
+
+  const phones = parseAutoAddPhones(config.phonesJson)
+  if (phones.length === 0) {
+    log('error', '自动添加好友配置无有效手机号')
+    return
+  }
+
+  const run = async (): Promise<void> => {
+    if (autoAddFriendsRunning || !runtime?.isRunning()) return
+    autoAddFriendsRunning = true
+    try {
+      for (const phone of phones) {
+        if (!runtime?.isRunning()) break
+        try {
+          await addFriend(phone)
+          log('reply', '自动添加好友本轮完成一条')
+        } catch (error: any) {
+          log('error', `自动添加好友失败：${error?.message || String(error)}`)
+          break
+        }
+      }
+    } finally {
+      autoAddFriendsRunning = false
+    }
+  }
+
+  autoAddFriendsTimer = setInterval(() => void run(), config.intervalSeconds * 1000)
 }
 
 function getAIConfig(settings: AppSettings): Partial<AIClientConfig> & { apiKey: string } {

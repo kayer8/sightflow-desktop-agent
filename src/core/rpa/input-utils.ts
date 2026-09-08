@@ -5,7 +5,7 @@ import { getInputAreaFromCache } from './vision-utils'
 const IS_WINDOWS = process.platform === 'win32'
 const IS_MAC = process.platform === 'darwin'
 
-import { delay, randomDelayIn, getRobot } from './util'
+import { delay, randomDelayIn, randomizeUiWaitMs, getRobot } from './util'
 
 // 原版 whatsapp-agent-demo 的贝塞尔曲线仿人滑动
 async function humanLikeMove(
@@ -70,7 +70,7 @@ async function humanLikeMove(
     let stepDelay = baseDelay + Math.random() * 2
     if (i > steps * 0.8) stepDelay += 2
     
-    await delay(stepDelay)
+    await delay(randomizeUiWaitMs(stepDelay))
   }
 }
 
@@ -89,14 +89,14 @@ export async function humanLikeClick(button: 'left' | 'right' = 'left'): Promise
 
     // 模拟物理按压耗时 (50ms - 150ms)
     const pressDuration = 120 + Math.random() * 100
-    await delay(Math.round(pressDuration))
+    await delay(randomizeUiWaitMs(Math.round(pressDuration)))
 
     // 模拟抬起
     robot.mouseToggle('up', button)
 
     // 点击后的随机微小停顿，模拟人类反应
     const afterClickDelay = 50 + Math.random() * 100
-    await delay(Math.round(afterClickDelay))
+    await delay(randomizeUiWaitMs(Math.round(afterClickDelay)))
   } catch (error) {
     console.error('【拟人化点击】执行失败:', error)
     // 降级处理：如果异常，确保至少尝试点击

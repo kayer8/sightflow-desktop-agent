@@ -136,6 +136,11 @@ interface AppSettings {
   }
   defaultCaptureStrategy: CaptureStrategy
   capture: Partial<Record<AppType, PerAppCapture>>
+  autoAddFriends: {
+    enabled: boolean
+    phonesJson: string
+    intervalSeconds: number
+  }
 }
 
 const BUILTIN_PROVIDER_CATALOG: ProviderCatalogItem[] = [
@@ -189,6 +194,21 @@ const PlayIcon = () => (
 const StopIcon = () => (
   <svg viewBox="0 0 24 24" fill="currentColor">
     <rect x="6" y="6" width="12" height="12" rx="2" />
+  </svg>
+)
+
+const UserPlusIcon = (): React.JSX.Element => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M15 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1" />
+    <circle cx="8.5" cy="7" r="3.5" />
+    <path d="M19 8v6M16 11h6" />
   </svg>
 )
 
@@ -559,6 +579,8 @@ function BottomBar({
   status: EngineStatus
   setStatus: (s: EngineStatus) => void
 }) {
+  const [testingAutoAdd, setTestingAutoAdd] = useState(false)
+
   const handleStart = useCallback(async () => {
     const settings = (await window.electron?.invoke('settings:getAll')) as AppSettings | undefined
     if (!settings?.vision?.apiKey) {
@@ -597,6 +619,23 @@ function BottomBar({
     showToast(t('toast.engineStopped'), 'success')
   }, [setStatus])
 
+  const handleTestAutoAdd = useCallback(async () => {
+    if (testingAutoAdd) return
+    setTestingAutoAdd(true)
+    try {
+      const result = await window.electron?.invoke('autoAddFriends:test') as
+        | { success?: boolean; error?: string; phone?: string }
+        | undefined
+      if (result?.success) {
+        showToast(`已完成测试添加联系人（${result.phone || '手机号'}）`, 'success')
+      } else {
+        showToast(result?.error || '测试添加联系人失败', 'error')
+      }
+    } finally {
+      setTestingAutoAdd(false)
+    }
+  }, [testingAutoAdd])
+
   const running = status === 'running'
 
   return (
@@ -612,6 +651,15 @@ function BottomBar({
           {t('control.start')}
         </button>
       )}
+      <button
+        className="bottom-btn bottom-btn-test"
+        onClick={handleTestAutoAdd}
+        disabled={running || testingAutoAdd}
+        title="仅测试一次自动添加联系人，不启动引擎"
+      >
+        <UserPlusIcon />
+        {testingAutoAdd ? '测试中...' : '测试添加联系人'}
+      </button>
       <button
         className="bottom-btn bottom-btn-settings"
         onClick={() => window.electron?.invoke('memory:open')}
@@ -666,6 +714,9 @@ function SettingsPanel() {
   const [visionBaseURL, setVisionBaseURL] = useState('https://api.openai.com/v1')
   const [visionModel, setVisionModel] = useState('gpt-5.5')
   const [testing, setTesting] = useState(false)
+  const [autoAddEnabled, setAutoAddEnabled] = useState(false)
+  const [autoAddPhonesJson, setAutoAddPhonesJson] = useState('{"phones":[]}')
+  const [autoAddInterval, setAutoAddInterval] = useState('20')
 
   useEffect(() => {
     const load = async () => {
@@ -674,6 +725,9 @@ function SettingsPanel() {
         setVisionApiKey(settings.vision?.apiKey || '')
         setVisionBaseURL(settings.vision?.baseURL || 'https://api.openai.com/v1')
         setVisionModel(settings.vision?.model || 'gpt-5.5')
+        setAutoAddEnabled(settings.autoAddFriends?.enabled === true)
+        setAutoAddPhonesJson(settings.autoAddFriends?.phonesJson || '{"phones":[]}')
+        setAutoAddInterval(String(settings.autoAddFriends?.intervalSeconds || 20))
       }
     }
 
@@ -692,6 +746,21 @@ function SettingsPanel() {
     })
     showToast(t('settings.saved'), 'success')
   }, [visionApiKey, visionBaseURL, visionModel])
+
+  const handleSaveAutoAddFriends = useCallback(async () => {
+    try {
+      const parsed = JSON.parse(autoAddPhonesJson)
+      if (!Array.isArray(parsed?.phones)) throw new Error('JSON 必须包含 phones 数组')
+      const intervalSeconds = Math.max(20, Math.floor(Number(autoAddInterval) || 20))
+      await window.electron?.invoke('settings:set', {
+        autoAddFriends: { enabled: autoAddEnabled, phonesJson: autoAddPhonesJson, intervalSeconds }
+      })
+      setAutoAddInterval(String(intervalSeconds))
+      showToast('自动添加好友配置已保存', 'success')
+    } catch (error: any) {
+      showToast(`自动添加好友配置无效: ${error?.message || String(error)}`, 'error')
+    }
+  }, [autoAddEnabled, autoAddInterval, autoAddPhonesJson])
 
   const handleTestConnection = useCallback(async () => {
     if (!visionApiKey) return
@@ -774,6 +843,47 @@ function SettingsPanel() {
             {t('settings.saveVision')}
           </button>
         </div>
+      </div>
+
+      <div className="card base-settings-card">
+        <div className="card-title">自动添加好友（仅企业微信）</div>
+        <label className="form-checkbox-row">
+          <input
+            type="checkbox"
+            checked={autoAddEnabled}
+            onChange={(event) => setAutoAddEnabled(event.target.checked)}
+          />
+          <span>开启自动添加好友</span>
+        </label>
+
+        <div className="form-group">
+          <label className="form-label">手机号 JSON</label>
+          <textarea
+            className="form-input"
+            value={autoAddPhonesJson}
+            onChange={(event) => setAutoAddPhonesJson(event.target.value)}
+            rows={5}
+            placeholder={'{"phones":["13800138000"]}'}
+            spellCheck={false}
+          />
+          <div className="form-hint">格式：{"{"}"phones":["手机号1","手机号2"]{"}"}</div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">执行间隔（秒，最少 20 秒）</label>
+          <input
+            className="form-input"
+            type="number"
+            min={20}
+            step={1}
+            value={autoAddInterval}
+            onChange={(event) => setAutoAddInterval(event.target.value)}
+          />
+        </div>
+
+        <button className="btn btn-primary" onClick={handleSaveAutoAddFriends}>
+          保存自动添加好友配置
+        </button>
       </div>
     </div>
   )

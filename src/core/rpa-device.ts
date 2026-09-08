@@ -28,6 +28,7 @@ import {
   setLayoutCache
 } from './rpa/vision-utils'
 import { getWechatWindowInfo } from './rpa/window-utils'
+import { addWeWorkFriend } from './rpa/auto-add-friend-action'
 
 export class RPADevice implements DesktopDevice {
   private appType: AppType = 'wechat'
@@ -45,6 +46,12 @@ export class RPADevice implements DesktopDevice {
   setAIConfig(config: Partial<AIClientConfig> & { apiKey: string }): void {
     if (!config.apiKey) return
     this.aiClient = new AIClient(config)
+  }
+
+  async addFriend(phone: string): Promise<void> {
+    if (this.appType !== 'wework') throw new Error('自动添加好友仅支持企业微信')
+    if (!this.aiClient) throw new Error('AI Client 未初始化')
+    await addWeWorkFriend(this.aiClient, phone)
   }
 
   // ── 生命周期 ──
